@@ -11,6 +11,7 @@ Prazan projekat sa pratećim bibliotekama koje koristimo na času.
 7. ALT+SHIFT+F10 -> project_base -> run
 8. WASD kretanje kroz scenu, ESC exit
 9. B - aktivacija Blinn-Phong
+10. Screen-Recording - https://github.com/janamilutinovic/RG/blob/main/Screen-Recording-2024-08-27T17_54_21.867Z.webm (skinuti i otvoriti u browseru)
 
 
 # Implementirano
