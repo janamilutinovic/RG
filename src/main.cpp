@@ -32,6 +32,8 @@ unsigned int loadCubemap(vector<std::string> faces);
 // settings
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
+bool blinn = false;
+bool blinnKeyPressed = false;
 
 // camera
 
@@ -60,7 +62,8 @@ struct ProgramState {
     Camera camera;
     bool CameraMouseMovementUpdateEnabled = true;
     glm::vec3 floorPosition = glm::vec3(0.0f);
-    float floorScale = 1.0f;
+    glm::vec3 move = glm::vec3(0.0f);
+    float floorScale = 0.1f;
     glm::vec3 grassPosition = glm::vec3(0.0f);
     float grassScale = 1.0f;
     PointLight pointLight;
@@ -83,7 +86,10 @@ void ProgramState::SaveToFile(std::string filename) {
         << camera.Position.z << '\n'
         << camera.Front.x << '\n'
         << camera.Front.y << '\n'
-        << camera.Front.z << '\n';
+        << camera.Front.z << '\n'
+        << move.x << '\n'
+        << move.y << '\n'
+        << move.z << '\n';
 }
 
 void ProgramState::LoadFromFile(std::string filename) {
@@ -98,7 +104,10 @@ void ProgramState::LoadFromFile(std::string filename) {
            >> camera.Position.z
            >> camera.Front.x
            >> camera.Front.y
-           >> camera.Front.z;
+           >> camera.Front.z
+           >> move.x
+           >> move.y
+           >> move.z ;
     }
 }
 
@@ -161,17 +170,22 @@ int main() {
     // configure global opengl state
     // -----------------------------
     glEnable(GL_DEPTH_TEST);
+    //glEnable(GL_CULL_FACE);
+    //glCullFace(GL_FRONT);
 
     // build and compile shaders
     // -------------------------
     Shader ourShader("resources/shaders/2.model_lighting.vs", "resources/shaders/2.model_lighting.fs");
+    Shader blendShader("resources/shaders/3.1.blending.vs", "resources/shaders/3.1.blending.fs");
     Shader skyboxShader("resources/shaders/skybox.vs", "resources/shaders/skybox.fs");
 
     ourShader.use();
     ourShader.setInt("texture1", 0);
-
     skyboxShader.use();
     skyboxShader.setInt("skybox", 0);
+    blendShader.use();
+    blendShader.setInt("texture1", 0);
+
 
     float skyboxVertices[] = {
             // positions
@@ -218,28 +232,61 @@ int main() {
             1.0f, -1.0f,  1.0f
     };
 
-    float planeVertices[] = {
-            // positions          // texture Coords
-            5.0f, -0.5f,  5.0f,  2.0f, 0.0f,
-            -5.0f, -0.5f,  5.0f,  0.0f, 0.0f,
-            -5.0f, -0.5f, -5.0f,  0.0f, 2.0f,
 
-            5.0f, -0.5f,  5.0f,  2.0f, 0.0f,
-            -5.0f, -0.5f, -5.0f,  0.0f, 2.0f,
-            5.0f, -0.5f, -5.0f,  2.0f, 2.0f
+    float transparentVertices[] = {
+            // positions         // texture Coords (swapped y coordinates because texture is flipped upside down)
+            0.0f,  0.5f,  0.0f,  0.0f,  0.0f,
+            0.0f, -0.5f,  0.0f,  0.0f,  1.0f,
+            1.0f, -0.5f,  0.0f,  1.0f,  1.0f,
+
+            0.0f,  0.5f,  0.0f,  0.0f,  0.0f,
+            1.0f, -0.5f,  0.0f,  1.0f,  1.0f,
+            1.0f,  0.5f,  0.0f,  1.0f,  0.0f
     };
-
-    // plane VAO
-    unsigned int planeVAO, planeVBO;
-    glGenVertexArrays(1, &planeVAO);
-    glGenBuffers(1, &planeVBO);
-    glBindVertexArray(planeVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, planeVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(planeVertices), &planeVertices, GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+    float cubeVertices[] = {
+            // back face
+            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f, // bottom-left
+            0.5f, -0.5f, -0.5f,  1.0f, 0.0f, // bottom-right
+            0.5f,  0.5f, -0.5f,  1.0f, 1.0f, // top-right
+            0.5f,  0.5f, -0.5f,  1.0f, 1.0f, // top-right
+            -0.5f,  0.5f, -0.5f,  0.0f, 1.0f, // top-left
+            -0.5f, -0.5f, -0.5f,  0.0f, 0.0f, // bottom-left
+            // front face
+            -0.5f, -0.5f,  0.5f,  0.0f, 0.0f, // bottom-left
+            0.5f,  0.5f,  0.5f,  1.0f, 1.0f, // top-right
+            0.5f, -0.5f,  0.5f,  1.0f, 0.0f, // bottom-right
+            0.5f,  0.5f,  0.5f,  1.0f, 1.0f, // top-right
+            -0.5f, -0.5f,  0.5f,  0.0f, 0.0f, // bottom-left
+            -0.5f,  0.5f,  0.5f,  0.0f, 1.0f, // top-left
+            // left face
+            -0.5f,  0.5f,  0.5f,  1.0f, 0.0f, // top-right
+            -0.5f, -0.5f, -0.5f,  0.0f, 1.0f, // bottom-left
+            -0.5f,  0.5f, -0.5f,  1.0f, 1.0f, // top-left
+            -0.5f, -0.5f, -0.5f,  0.0f, 1.0f, // bottom-left
+            -0.5f,  0.5f,  0.5f,  1.0f, 0.0f, // top-right
+            -0.5f, -0.5f,  0.5f,  0.0f, 0.0f, // bottom-right
+            // right face
+            0.5f,  0.5f,  0.5f,  1.0f, 0.0f, // top-left
+            0.5f,  0.5f, -0.5f,  1.0f, 1.0f, // top-right
+            0.5f, -0.5f, -0.5f,  0.0f, 1.0f, // bottom-right
+            0.5f, -0.5f, -0.5f,  0.0f, 1.0f, // bottom-right
+            0.5f, -0.5f,  0.5f,  0.0f, 0.0f, // bottom-left
+            0.5f,  0.5f,  0.5f,  1.0f, 0.0f, // top-left
+            // bottom face
+            -0.5f, -0.5f, -0.5f,  0.0f, 1.0f, // top-right
+            0.5f, -0.5f,  0.5f,  1.0f, 0.0f, // bottom-left
+            0.5f, -0.5f, -0.5f,  1.0f, 1.0f, // top-left
+            0.5f, -0.5f,  0.5f,  1.0f, 0.0f, // bottom-left
+            -0.5f, -0.5f, -0.5f,  0.0f, 1.0f, // top-right
+            -0.5f, -0.5f,  0.5f,  0.0f, 0.0f, // bottom-right
+            // top face
+            -0.5f,  0.5f, -0.5f,  0.0f, 1.0f, // top-left
+            0.5f,  0.5f, -0.5f,  1.0f, 1.0f, // top-right
+            0.5f,  0.5f,  0.5f,  1.0f, 0.0f, // bottom-right
+            0.5f,  0.5f,  0.5f,  1.0f, 0.0f, // bottom-right
+            -0.5f,  0.5f,  0.5f,  0.0f, 0.0f, // bottom-left
+            -0.5f,  0.5f, -0.5f,  0.0f, 1.0f  // top-left
+    };
 
     //skybox VAO
     unsigned int skyboxVAO, skyboxVBO;
@@ -250,7 +297,34 @@ int main() {
     glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), &skyboxVertices, GL_STATIC_DRAW);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-//
+
+    // transparent VAO
+    unsigned int transparentVAO, transparentVBO;
+    glGenVertexArrays(1, &transparentVAO);
+    glGenBuffers(1, &transparentVBO);
+    glBindVertexArray(transparentVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, transparentVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(transparentVertices), transparentVertices, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+    glBindVertexArray(0);
+
+    // cube VAO
+    unsigned int cubeVAO, cubeVBO;
+    glGenVertexArrays(1, &cubeVAO);
+    glGenBuffers(1, &cubeVBO);
+    glBindVertexArray(cubeVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, cubeVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVertices), &cubeVertices, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+    glBindVertexArray(0);
+
+    //
 //    vector<std::string> faces{
 //            FileSystem::getPath("resources/textures/skybox/right.png"),
 //            FileSystem::getPath("resources/textures/skybox/left.png"),
@@ -267,19 +341,12 @@ int main() {
             FileSystem::getPath("resources/textures/skybox/pz.png"),
             FileSystem::getPath("resources/textures/skybox/nz.png")
     };
+
     unsigned int cubemapTexture = loadCubemap(faces);
-
-    unsigned int floorTexture = loadTexture(FileSystem::getPath("resources/textures/pngwing.com.png").c_str());
-
+    unsigned int transparentTexture = loadTexture(FileSystem::getPath("resources/textures/flowers.png").c_str());
+    unsigned int cubeTexture  = loadTexture(FileSystem::getPath("resources/textures/grungy-pink-marble-textured-background.jpg").c_str());
     // load models
     // -----------
-
-//    Model ourModel("resources/objects/backpack/backpack.obj");
-//    Model ourModel("resources/objects/Suitcase/Vintage_Suitcase_LP.obj");
-
-//    Model floorModel("resources/objects/rug/uploads_files_3418522_51072_GertrudisMedallionRug_5'x8'.obj");
-//    floorModel.SetShaderTextureNamePrefix("material.");
-
     Model floorModel("resources/objects/grass/10450_Rectangular_Grass_Patch_v1_iterations-2.obj");
     floorModel.SetShaderTextureNamePrefix("material.");
 
@@ -302,11 +369,15 @@ int main() {
     pointLight.linear = 0.09f;
     pointLight.quadratic = 0.0032f;
 
-
-//    skyboxShader.use();
-//    skyboxShader.setInt("skybox", 0);
-    // draw in wireframe
-    //glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    vector<glm::vec3> flower_positions
+            {
+                    glm::vec3(5.0f, 1.5f, 5.0f),
+                    glm::vec3(10.0f, 1.5f, 5.0f),
+                    glm::vec3(-5.0f, 1.5f, 5.0f),
+                    glm::vec3(8.0f, 1.5f, -5.0f),
+                    glm::vec3(-10.0f, 1.5f, -10.0f),
+                    glm::vec3(-12.0f, 1.5f, 12.0f)
+            };
 
     // render loop
     // -----------
@@ -347,36 +418,21 @@ int main() {
 
         ourShader.setMat4("projection", projection);
         ourShader.setMat4("view", view);
+        ourShader.setInt("blinn", blinn);
 
 
         glm::mat4 modelFloor = glm::mat4(1.0f);
-//        modelFloor = glm::translate(modelFloor,
-//                               programState->grassPosition); // translate it down so it's at the center of the scene
-//        modelFloor = glm::scale(modelFloor, glm::vec3(programState->backpackScale));    // it's a bit too big for our scene, so scale it down
-
         modelFloor = glm::translate(modelFloor, programState->floorPosition);
-        modelFloor = glm::scale(modelFloor, glm::vec3(0.10f));
-//        modelFloor = glm::scale(modelFloor, glm::vec3(0.07f, 0.01f, 0.06f));
+//        modelFloor = glm::scale(modelFloor, glm::vec3(0.1f));
+        modelFloor = glm::scale(modelFloor, glm::vec3(programState->floorScale));
         modelFloor = glm::rotate(modelFloor, glm::radians(270.0f), glm::vec3(1.0f, 0.0f, 0.0f));
         ourShader.setMat4("model", modelFloor);
         floorModel.Draw(ourShader);
 
-        // render the loaded models
-        // floor
-//        glm::vec3 floorPosition = glm::vec3(0.0f);
-//        glBindVertexArray(planeVAO);
-//        glBindTexture(GL_TEXTURE_2D, floorTexture);
-//        glm::mat4 modelFloor = glm::mat4(1.0f);
-//        modelFloor = glm::translate(modelFloor, programState->floorPosition);
-//        ourShader.setMat4("model", modelFloor);
-//        glDrawArrays(GL_TRIANGLES, 0, 6);
-//        glBindVertexArray(0);
-//        glDepthFunc(GL_LESS);
-
         //chair model
         glm::mat4 modelChair = glm::mat4(1.0f);
         modelChair = glm::translate(modelChair,
-                                    programState->floorPosition+glm::vec3(2.0f)); // translate it down so it's at the center of the scene
+                                    programState->floorPosition + programState->move); // translate it down so it's at the center of the scene
         modelChair = glm::translate(modelChair, glm::vec3(0.0, 0.0f, 0.0));
         modelChair = glm::scale(modelChair, glm::vec3(0.05));    // it's a bit too big for our scene, so scale it down
 //        modelChair = glm::rotate(modelChair, glm::radians(.0f), glm::vec3(0.0f, 1.0f, 0.0f));
@@ -386,28 +442,57 @@ int main() {
         //dog model
         glm::mat4 modelDog = glm::mat4(1.0f);
         modelDog = glm::translate(modelDog,
-                                  programState->floorPosition+glm::vec3(2.0f)); // translate it down so it's at the center of the scene
+                                  programState->floorPosition + programState->move); // translate it down so it's at the center of the scene
         modelDog = glm::translate(modelDog, glm::vec3(-8.0, 0.0f, 10.0));
         modelDog = glm::scale(modelDog, glm::vec3(0.05f));    // it's a bit too big for our scene, so scale it down
         modelDog = glm::rotate(modelDog, glm::radians(60.0f), glm::vec3(0.0f, 1.0f, 0.0f));
         modelDog = glm::rotate(modelDog, glm::radians(270.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-//        modelDog = glm::rotate(modelDog, glm::radians(10.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        modelDog = glm::rotate(modelDog, cos(currentFrame), glm::vec3(0,0,1));
 
         ourShader.setMat4("model", modelDog);
         dogModel.Draw(ourShader);
 
-
         //Thinker model
         glm::mat4 modelThinker = glm::mat4(1.0f);
         modelThinker = glm::translate(modelThinker,
-                                  programState->floorPosition+glm::vec3(2.0f)); // translate it down so it's at the center of the scene
+                                  programState->floorPosition + programState->move); // translate it down so it's at the center of the scene
         modelThinker = glm::translate(modelThinker, glm::vec3(9.0, 0.2f, 8.0));
         modelThinker = glm::scale(modelThinker, glm::vec3(0.02));    // it's a bit too big for our scene, so scale it down
         modelThinker = glm::rotate(modelThinker, glm::radians(270.0f), glm::vec3(1.0f, 0.0f, 0.0f));
         modelThinker = glm::rotate(modelThinker, glm::radians(-90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-
         ourShader.setMat4("model", modelThinker);
         thinkerModel.Draw(ourShader);
+
+        // flower_positions
+        blendShader.use();
+        blendShader.setMat4("projection", projection);
+        blendShader.setMat4("view", view);
+        glBindVertexArray(transparentVAO);
+        glBindTexture(GL_TEXTURE_2D, transparentTexture);
+        glm::mat4 model = glm::mat4(1.0f);
+        for (unsigned int i = 0; i < flower_positions.size(); i++)
+        {
+            model = glm::mat4(1.0f);
+            model = glm::translate(model, flower_positions[i]);
+            blendShader.setMat4("model", model);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+        }
+
+        //face culling
+        glEnable(GL_CULL_FACE);
+        glFrontFace(GL_CW);
+        glCullFace(GL_BACK);
+
+        glBindVertexArray(cubeVAO);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, cubeTexture);
+        model = glm::translate(model,
+                                      programState->floorPosition + programState->move);
+        model = glm::translate(model, glm::vec3(-10.0f, 0.0f, -1.0f));
+        model = glm::scale(model, glm::vec3(3));
+        blendShader.setMat4("model", model);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+        glDisable(GL_CULL_FACE);
 
 
         // draw skybox as last
@@ -442,8 +527,6 @@ int main() {
     // glfw: terminate, clearing all previously allocated GLFW resources.
     // ------------------------------------------------------------------
 
-    glDeleteVertexArrays(1, &planeVAO);
-    glDeleteBuffers(1, &planeVBO);
     glfwTerminate();
     return 0;
 }
@@ -462,6 +545,18 @@ void processInput(GLFWwindow *window) {
         programState->camera.ProcessKeyboard(LEFT, deltaTime);
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         programState->camera.ProcessKeyboard(RIGHT, deltaTime);
+
+
+    if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS && !blinnKeyPressed)
+    {
+        blinn = !blinn;
+        blinnKeyPressed = true;
+    }
+    if (glfwGetKey(window, GLFW_KEY_C) == GLFW_RELEASE)
+    {
+        blinnKeyPressed = false;
+    }
+
 }
 
 // glfw: whenever the window size changed (by OS or user resize) this callback function executes
@@ -505,16 +600,17 @@ void DrawImGui(ProgramState *programState) {
 
     {
         static float f = 0.0f;
-        ImGui::Begin("Hello window");
-        ImGui::Text("Hello text");
+        ImGui::Begin("Settings");
+        ImGui::Text("Settings");
         ImGui::SliderFloat("Float slider", &f, 0.0, 1.0);
         ImGui::ColorEdit3("Background color", (float *) &programState->clearColor);
-        ImGui::DragFloat3("Backpack position", (float*)&programState->floorPosition);
-        ImGui::DragFloat("Backpack scale", &programState->floorScale, 0.05, 0.1, 4.0);
+        ImGui::DragFloat3("Floor position", (float*)&programState->floorPosition);
+        ImGui::DragFloat("Floor scale", &programState->floorScale, 0.05, 0.1, 4.0);
 
         ImGui::DragFloat("pointLight.constant", &programState->pointLight.constant, 0.05, 0.0, 1.0);
         ImGui::DragFloat("pointLight.linear", &programState->pointLight.linear, 0.05, 0.0, 1.0);
         ImGui::DragFloat("pointLight.quadratic", &programState->pointLight.quadratic, 0.05, 0.0, 1.0);
+        ImGui::DragFloat3("move", (float*)&programState->move, 0.05, 0.0, 1.0);
         ImGui::End();
     }
 
